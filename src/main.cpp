@@ -37,10 +37,16 @@
    between the LCD's LED pin and Arduino pin 9!
 */
 
+#define DEBUG
+#define USE_SCREEN
+
 #include <Arduino.h>
+#ifdef USE_SCREEN
+#include <SPI.h>
+#include "LCD_Functions.h"
+#else
 #include <SoftwareSerial.h>
-//#include <SPI.h>
-//#include "LCD_Functions.h"
+#endif //USE_SCREEN
 
 #define BAUDRATE 9600
 
@@ -48,27 +54,50 @@
 #define ESP8266_RX 10
 #define ESP8266_TX 3
 
-SoftwareSerial ESP8266(ESP8266_RX, ESP8266_TX);
-//#define ESP8266 Serial
-
-/*#define SERVER "104.27.128.214"
-#define HOST "api.opendota.com"
-#define PATH "/api/players/65316354/wl"*/
+#ifdef DEBUG
 
 #define SERVER "10.0.1.34"
 #define PORT "5000"
 #define HOST "10.0.1.34"
 #define PATH "/info/65316354"
+
+#else
+
+#define SERVER "dota-logger-server.herokuapp.com"
+#define PORT "80"
+#define HOST "dota-logger-server.herokuapp.com"
+#define PATH "/info/65316354"
+
+#endif //DEBUG
+
 #define TAG_START "##START"
 #define TAG_END   "##END"
 
-/*void printOnScreen(const String& data)
+#ifdef USE_SCREEN
+#define ESP8266 Serial
+#else
+SoftwareSerial ESP8266(ESP8266_RX, ESP8266_TX);
+#endif //USE_SCREEN
+String infoToDisplay;
+bool refreshDisplay;
+
+#ifdef USE_SCREEN
+void printOnScreen(const String& data)
 {
   clearDisplay(WHITE);
-  setStr(data.c_str(), 0, LCD_HEIGHT-8, BLACK);
+  setStr(data.c_str(), 0, 0, BLACK);
   updateDisplay();
-  delay(1000);
-}*/
+}
+#endif //USE_SCREEN
+
+void print(const String& data)
+{
+#ifdef USE_SCREEN
+  printOnScreen(data);
+#else
+  Serial.println(data);
+#endif //USE_SCREEN
+}
 
 String readData(int timeout)
 {
@@ -78,9 +107,7 @@ String readData(int timeout)
   {
     while (ESP8266.available())
     {
-      /*char c = ESP8266.read();
-      data += c;*/
-      String line = ESP8266.readStringUntil('\r');
+      String line = ESP8266.readStringUntil("\n");
 
       data += line;
     }
@@ -89,38 +116,35 @@ String readData(int timeout)
   return data;
 }
 
-bool sendRequest()
+String GetInfo()
 {
   String cmd = "AT+CIPSTART=0,\"TCP\",\""; cmd += SERVER; cmd += "\","; cmd += PORT;
-  Serial.print("-> ");
-  Serial.println(cmd);
+  print(String("-> ") + cmd);
   ESP8266.println(cmd);
   String data = readData(2000);
-  //Serial.println(data);
-  //printOnScreen(data);
+  print(data);
   delay(2000);
 
   cmd = "GET "; cmd += PATH; cmd += " HTTP/1.1\r\n";
   cmd +="Host: "; cmd += HOST; cmd += ":"; cmd += PORT; cmd += "\r\n";
-  //cmd += "Connection: keep-alive\r\n";
   cmd += "\r\n";
-  Serial.print("-> ");
-  Serial.println(cmd);
+  print(String("-> ") + cmd);
 
   String cmd2 = "AT+CIPSEND=0,"; cmd2 += String(cmd.length());
-  Serial.print("-> ");
-  Serial.println(cmd2);
+  print(String("-> ") + cmd2);
   ESP8266.println(cmd2);
   data = readData(2000);
-  //Serial.println(data);
-  //printOnScreen(data);
+  print(data);
   delay(2000);
 
+  // send request and get result
+  print(cmd);
   ESP8266.println(cmd);
   data = readData(2000);
-  //Serial.println(data);
-  //printOnScreen(data);
+  print(data);
+  delay(2000);
 
+  // parse result to extract DotA info
   unsigned int infiniteLoopChecker = 0;
   const unsigned int nbLoopsMax = 100;
   int start = 0;
@@ -143,10 +167,6 @@ bool sendRequest()
 
     ++infiniteLoopChecker;
 
-    Serial.print(infiniteLoopChecker);
-    Serial.print(":\t");
-    Serial.println(line);
-
     // store the line if necessary
     if (!storeResult && line.indexOf(TAG_START) > -1)
     {
@@ -165,58 +185,64 @@ bool sendRequest()
     }
   }
 
-  Serial.println(result);
-
   ESP8266.println("AT+CIPCLOSE=0");
-  data = readData(2000);
-  Serial.println(data);
-  //printOnScreen(data);
-  delay(1000);
+  data = readData(1000);
+  delay(100);
+
+  print(String("Length: ") + String(data.length()) + String("\nLength: ") + String(result.length()));
+
+  delay(5000);
+
+  print(result);
+
+  delay(5000);
+
+  return result;
 }
 
 void setup()
 {
-  Serial.begin(9600);
   ESP8266.begin(BAUDRATE);
   delay(10);
 
   pinMode(PIN_BUTTON, INPUT);
 
-  /*lcdBegin(); // This will setup our pins, and initialize the LCD
+#ifdef USE_SCREEN
+  lcdBegin(); // This will setup our pins, and initialize the LCD
   updateDisplay(); // with displayMap untouched, SFE logo
   setContrast(40); // Good values range from 40-60
-*/
-  delay(1000);
+  delay(10);
+#else
+  Serial.begin(BAUDRATE);
+#endif //USE_SCREEN
+
+  infoToDisplay = "INFO";
 
   String data;
 
   // We start by connecting to a WiFi network
   //Serial.println("AT+CWJAP=\"CookieMaestro\",\"UpEcOfMe\"");
   ESP8266.println("AT");
+  print("-> AT");
   data = readData(2000);
-  Serial.println(data);
-  //printOnScreen(data);
+  print(data);
   delay(1000);
 
-  /*ESP8266.println("AT+RST");
-  data = readData(2000);
-  Serial.println(data);
-  //printOnScreen(data);
-  delay(3000);*/
-
   ESP8266.println("AT+CIFSR");
+  print("-> AT+CIFSR");
   data = readData(2000);
-  Serial.println(data);
-  //printOnScreen(data);
+  print(data);
   delay(1000);
 
   ESP8266.println("AT+CIPMUX=1");
+  print("-> AT+CIPMUX=1");
   data = readData(2000);
-  Serial.println(data);
-  //printOnScreen(data);
+  print(data);
   delay(1000);
 
-  sendRequest();
+  infoToDisplay = GetInfo();
+
+  refreshDisplay = true;
 }
 
 // Loop turns the display into a local serial monitor echo.
@@ -224,38 +250,25 @@ void setup()
 // what you type on the display. Type ~ to clear the display.
 void loop()
 {
-  /*clearDisplay(WHITE);
-  setStr("ESP8266!", 0, LCD_HEIGHT-8, BLACK);
-  updateDisplay();*/
+  if (refreshDisplay)
+  {
+#ifdef USE_SCREEN
+    clearDisplay(WHITE);
+    //setStr("ESP8266!", 0, LCD_HEIGHT-8, BLACK);
+    updateDisplay();
+#endif //USE_SCREEN
+
+    print(String("info:\n") + infoToDisplay);
+
+    refreshDisplay = false;
+  }
 
   bool buttonPressed = digitalRead(PIN_BUTTON);
   if (buttonPressed)
   {
-    sendRequest();
-
-    /*ESP8266.println("AT");
-    String data = readData(1000);
-    Serial.println(data);*/
-    //printOnScreen(data);
+    infoToDisplay = GetInfo();
+    refreshDisplay = true;
   }
 
   delay(10);
-
-  /*while(ESP8266.available() > 0)
-  {
-    char a = ESP8266.read();
-    if(a == '\0')
-      continue;
-    if(a != '\r' && a != '\n' && (a < 32))
-      continue;
-    Serial.print(a);
-  }
-
-  while(Serial.available() > 0)
-  {
-    char a = Serial.read();
-    Serial.write(a);
-    ESP8266.write(a);
-  }*/
-
 }

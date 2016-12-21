@@ -37,7 +37,7 @@
    between the LCD's LED pin and Arduino pin 9!
 */
 
-#define DEBUG
+//#define DEBUG
 #define USE_SCREEN
 
 #include <Arduino.h>
@@ -82,26 +82,26 @@ String infoToDisplay;
 bool refreshDisplay;
 
 #ifdef USE_SCREEN
-void printOnScreen(const String& data)
+void PrintOnScreen(int x, int y, const String& data)
 {
   clearDisplay(WHITE);
-  setStr(data.c_str(), 0, 0, BLACK);
+  setStr(data.c_str(), x, y, BLACK);
   updateDisplay();
 }
 #endif //USE_SCREEN
 
-void print(const String& data)
+void Print(int x, int y, const String& data)
 {
 #ifdef USE_SCREEN
-  printOnScreen(data);
+  PrintOnScreen(x, y, data);
 #else
   Serial.println(data);
 #endif //USE_SCREEN
 }
 
-String readData(int timeout)
+bool ReadDataFromEsp(int timeout, const String& validationText, String& data)
 {
-  String data = "";
+  data = "";
   long int time = millis() + timeout;
   while (time > millis())
   {
@@ -116,33 +116,37 @@ String readData(int timeout)
   return data;
 }
 
-String GetInfo()
+bool GetInfo(String& info)
 {
+  info = "";
+
+  bool success = false;
+  String data;
+
   String cmd = "AT+CIPSTART=0,\"TCP\",\""; cmd += SERVER; cmd += "\","; cmd += PORT;
-  print(String("-> ") + cmd);
+  Print(0, 0, String("-> ") + cmd);
   ESP8266.println(cmd);
-  String data = readData(2000);
-  print(data);
+  success = ReadDataFromEsp(2000, "OK", data);
+  Print(0, 0, data);
   delay(2000);
 
   cmd = "GET "; cmd += PATH; cmd += " HTTP/1.1\r\n";
   cmd +="Host: "; cmd += HOST; cmd += ":"; cmd += PORT; cmd += "\r\n";
   cmd += "\r\n";
-  print(String("-> ") + cmd);
+  Print(0, 0, String("-> ") + cmd);
 
   String cmd2 = "AT+CIPSEND=0,"; cmd2 += String(cmd.length());
-  print(String("-> ") + cmd2);
+  Print(0, 0, String("-> ") + cmd2);
   ESP8266.println(cmd2);
-  data = readData(2000);
-  print(data);
-  delay(2000);
+  success = ReadDataFromEsp(500, "OK", data);
+  Print(0, 0, data);
 
   // send request and get result
-  print(cmd);
+  Print(0, 0, cmd);
   ESP8266.println(cmd);
-  data = readData(2000);
-  print(data);
-  delay(2000);
+  success = ReadDataFromEsp(2000, "OK", data);
+  Print(0, 0, data);
+  delay(1000);
 
   // parse result to extract DotA info
   unsigned int infiniteLoopChecker = 0;
@@ -150,15 +154,13 @@ String GetInfo()
   int start = 0;
   unsigned int dataLength = data.length();
   bool storeResult = false;
-  String result = "";
   while (start < dataLength && infiniteLoopChecker < nbLoopsMax)
   {
     // get the current line
     int indexOfNewLine = data.indexOf('\n', start);
     if (indexOfNewLine == -1)
     {
-      Serial.println("End of response.");
-      break;
+      indexOfNewLine = dataLength;
     }
 
     String line = data.substring(start, indexOfNewLine);
@@ -181,23 +183,42 @@ String GetInfo()
 
     if (storeResult)
     {
-      result += line + "\n";
+      info += line + "\n";
     }
   }
 
   ESP8266.println("AT+CIPCLOSE=0");
-  data = readData(1000);
+  success = ReadDataFromEsp(1000, "OK", data);
   delay(100);
 
-  print(String("Length: ") + String(data.length()) + String("\nLength: ") + String(result.length()));
+  return success;
+}
 
-  delay(5000);
+void DisplayInfo(const String& info)
+{
+  unsigned int cptLines = 0;
+  const unsigned int nbLoopsMax = 100;
+  const unsigned int length = info.length();
+  int start = 0;
+  while (start < length && cptLines < nbLoopsMax)
+  {
+    // get the current line
+    int indexOfNewLine = info.indexOf('\n', start);
+    if (indexOfNewLine == -1)
+    {
+      indexOfNewLine = length;
+    }
 
-  print(result);
+    String line = info.substring(start, indexOfNewLine);
 
-  delay(5000);
+    if (line.length() > 0)
+    {
+      Print(cptLines * 8, 0, line);
+    }
 
-  return result;
+    start = indexOfNewLine + 1;
+    ++cptLines;
+  }
 }
 
 void setup()
@@ -216,31 +237,39 @@ void setup()
   Serial.begin(BAUDRATE);
 #endif //USE_SCREEN
 
+  Print(0, 0, "Init...");
+
   infoToDisplay = "INFO";
 
+  bool success = true;
   String data;
 
   // We start by connecting to a WiFi network
   //Serial.println("AT+CWJAP=\"CookieMaestro\",\"UpEcOfMe\"");
   ESP8266.println("AT");
-  print("-> AT");
-  data = readData(2000);
-  print(data);
-  delay(1000);
+  Print(0, 0, "-> AT");
+  success = success && ReadDataFromEsp(2000, "OK", data);
+  Print(0, 0, data);
+  delay(500);
 
   ESP8266.println("AT+CIFSR");
-  print("-> AT+CIFSR");
-  data = readData(2000);
-  print(data);
+  Print(0, 0, "-> AT+CIFSR");
+  success = success && ReadDataFromEsp(2000, "OK", data);
+  Print(0, 0, data);
   delay(1000);
 
   ESP8266.println("AT+CIPMUX=1");
-  print("-> AT+CIPMUX=1");
-  data = readData(2000);
-  print(data);
-  delay(1000);
+  Print(0, 0, "-> AT+CIPMUX=1");
+  success = success && ReadDataFromEsp(2000, "OK", data);
+  Print(0, 0, data);
+  delay(500);
 
-  infoToDisplay = GetInfo();
+  success = success && GetInfo(infoToDisplay);
+
+  if (!success)
+  {
+    infoToDisplay = "Error";
+  }
 
   refreshDisplay = true;
 }
@@ -254,11 +283,10 @@ void loop()
   {
 #ifdef USE_SCREEN
     clearDisplay(WHITE);
-    //setStr("ESP8266!", 0, LCD_HEIGHT-8, BLACK);
     updateDisplay();
 #endif //USE_SCREEN
 
-    print(String("info:\n") + infoToDisplay);
+    DisplayInfo(infoToDisplay);
 
     refreshDisplay = false;
   }
@@ -266,7 +294,13 @@ void loop()
   bool buttonPressed = digitalRead(PIN_BUTTON);
   if (buttonPressed)
   {
-    infoToDisplay = GetInfo();
+    bool success = GetInfo(infoToDisplay);
+
+    if (!success)
+    {
+      infoToDisplay = "Error";
+    }
+
     refreshDisplay = true;
   }
 

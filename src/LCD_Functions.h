@@ -1,4 +1,8 @@
-#include <Arduino.h>
+#include <SPI.h>
+
+/*
+ /!\ FOR ESP8266 ONLY /!\
+ */
 
 /* Pin definitions:
 Most of these pins can be moved to any digital or analog pin.
@@ -7,8 +11,8 @@ LED (backlight) pin should remain on a PWM-capable pin. */
 const int scePin = 7;   // SCE - Chip select, pin 3 on LCD.
 const int rstPin = 6;   // RST - Reset, pin 4 on LCD.
 const int dcPin = 5;    // DC - Data/Command, pin 5 on LCD.
-const int sdinPin = 11;  // DN(MOSI) - Serial data, pin 6 on LCD.
-const int sclkPin = 13;  // SCLK - Serial clock, pin 7 on LCD.
+const int sdinPin = 13;  // DN(MOSI) - Serial data, pin 6 on LCD. Can't be changed !
+const int sclkPin = 14;  // SCLK - Serial clock, pin 7 on LCD. Can't be changed !
 const int blPin = 9;    // LED - Backlight LED, pin 8 on LCD.
 
 /* PCD8544-specific defines: */
@@ -396,7 +400,7 @@ void setChar(char character, int x, int y, boolean bw)
 // progressive coordinates until it's done.
 // This function was grabbed from the SparkFun ColorLCDShield
 // library.
-void setStr(char * dString, int x, int y, boolean bw)
+void setStr(const char * dString, int x, int y, boolean bw)
 {
   while (*dString != 0x00) // loop until null terminator
   {
@@ -517,5 +521,3 @@ void lcdBegin(void)
   LCDWrite(LCD_COMMAND, 0x20);
   LCDWrite(LCD_COMMAND, 0x0C); //Set display control, normal mode.
 }
-
-

@@ -1,308 +1,283 @@
-/* Nokia 5100 LCD Example Code
-   Graphics driver and PCD8544 interface code for SparkFun's
-   84x48 Graphic LCD.
-   https://www.sparkfun.com/products/10168
-
-  by: Jim Lindblom
-    adapted from code by Nathan Seidle and mish-mashed with
-    code from the ColorLCDShield.
-  date: October 10, 2013
-  license: Officially, the MIT License. Review the included License.md file
-  Unofficially, Beerware. Feel free to use, reuse, and modify this
-  code as you see fit. If you find it useful, and we meet someday,
-  you can buy me a beer.
-
-  This all-inclusive sketch will show off a series of graphics
-  functions, like drawing lines, circles, squares, and text. Then
-  it'll go into serial monitor echo mode, where you can type
-  text into the serial monitor, and it'll be displayed on the
-  LCD.
-
-  This stuff could all be put into a library, but we wanted to
-  leave it all in one sketch to keep it as transparent as possible.
-
-  Hardware: (Note most of these pins can be swapped)
-    Graphic LCD Pin ---------- Arduino Pin
-       1-VCC       ----------------  5V
-       2-GND       ----------------  GND
-       3-SCE       ----------------  7
-       4-RST       ----------------  6
-       5-D/C       ----------------  5
-       6-DN(MOSI)  ----------------  11
-       7-SCLK      ----------------  13
-       8-LED       - 330 Ohm res --  9
-   The SCLK, DN(MOSI), must remain where they are, but the other
-   pins can be swapped. The LED pin should remain a PWM-capable
-   pin. Don't forget to stick a current-limiting resistor in line
-   between the LCD's LED pin and Arduino pin 9!
+/*
+*  Simple HTTP get webclient test
 */
 
-//#define DEBUG
-#define USE_SCREEN
-
 #include <Arduino.h>
-#ifdef USE_SCREEN
-#include <SPI.h>
+#include <ESP8266WiFi.h>
+#include <EEPROM.h>
+
 #include "LCD_Functions.h"
-#else
-#include <SoftwareSerial.h>
-#endif //USE_SCREEN
+
 
 #define BAUDRATE 9600
+#define BREAK_CODE '\r'
 
-#define PIN_BUTTON 2
-#define ESP8266_RX 10
-#define ESP8266_TX 3
+#define INFO_UPDATE_FREQUENCY 10000 // Send a request every 10s
 
-#ifdef DEBUG
 
-#define SERVER "10.0.1.34"
-#define PORT "5000"
-#define HOST "10.0.1.34"
-#define PATH "/info/65316354"
+const char* host = "dota-logger-server.herokuapp.com";
+const String EEPROMSeparator = "$-$";
 
-#else
+String ssid     = "TEST";
+String password = "TEST";
+String userId   = "TEST";
 
-#define SERVER "dota-logger-server.herokuapp.com"
-#define PORT "80"
-#define HOST "dota-logger-server.herokuapp.com"
-#define PATH "/info/65316354"
+// we want to launch the first request immediately
+unsigned int timeOfTheLastRequest = millis() + INFO_UPDATE_FREQUENCY;
 
-#endif //DEBUG
+String ReadFromEEPROM(
+    unsigned int addrStart, unsigned int length, char breakCode
+)
+{
+    String data = "";
 
-#define TAG_START "##START"
-#define TAG_END   "##END"
+    for (unsigned int i=addrStart; i<addrStart + length; ++i)
+    {
+        char value = EEPROM.read(i);
 
-#ifdef USE_SCREEN
-#define ESP8266 Serial
-#else
-SoftwareSerial ESP8266(ESP8266_RX, ESP8266_TX);
-#endif //USE_SCREEN
-String infoToDisplay;
-bool refreshDisplay;
+        if (value == breakCode)
+        {
+            break;
+        }
 
-#ifdef USE_SCREEN
+        data += value;
+    }
+
+    return data;
+}
+
+void WriteToEEPROM(
+    unsigned int addrStart, unsigned int length, char breakCode,
+    const String& value
+)
+{
+    if (value.length() > length - 1)
+    {
+        Serial.println("Can't write on EEPROM: value length is too big.");
+    }
+
+    unsigned int i = addrStart;
+    while (i<addrStart + value.length())
+    {
+        EEPROM.write(i, value.charAt(i));
+
+        ++i;
+    }
+
+    EEPROM.write(i, breakCode);
+
+    EEPROM.commit();
+}
+
+void ConnectToWiFi()
+{
+    Serial.println();
+    Serial.println();
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+
+    WiFi.begin(ssid.c_str(), password.c_str());
+
+    unsigned int i = 0;
+    while (WiFi.status() != WL_CONNECTED && i < 10)
+    {
+        delay(1000);
+        Serial.print(".");
+
+        ++i;
+    }
+
+    if (i >= 10)
+    {
+        Serial.println("Unable to connect to WiFi. Try using commands 'ssid:' and 'password:' to set proper values.");
+        return;
+    }
+
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+String GetInfo()
+{
+    String response;
+
+    Serial.print("connecting to ");
+    Serial.println(host);
+
+    // Use WiFiClient class to create TCP connections
+    WiFiClient client;
+    const int httpPort = 80;
+    if (!client.connect(host, httpPort))
+    {
+        Serial.println("connection failed");
+        return response;
+    }
+
+    // We now create a URI for the request
+    String url = "/info/" + userId;
+    Serial.print("Requesting URL: ");
+    Serial.println(url);
+
+    // This will send the request to the server
+    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+    "Host: " + host + "\r\n" +
+    "Connection: close\r\n\r\n");
+    delay(500);
+
+
+    // Read all the lines of the reply from server and print them to Serial
+    while(client.available())
+    {
+        String line = client.readStringUntil('\r');
+        response += line;
+    }
+
+    Serial.println();
+    Serial.println("closing connection");
+
+    return response;
+}
+
 void PrintOnScreen(int x, int y, const String& data)
 {
-  clearDisplay(WHITE);
-  setStr(data.c_str(), x, y, BLACK);
-  updateDisplay();
-}
-#endif //USE_SCREEN
-
-void Print(int x, int y, const String& data)
-{
-#ifdef USE_SCREEN
-  PrintOnScreen(x, y, data);
-#else
-  Serial.println(data);
-#endif //USE_SCREEN
-}
-
-bool ReadDataFromEsp(int timeout, const String& validationText, String& data)
-{
-  data = "";
-  long int time = millis() + timeout;
-  while (time > millis())
-  {
-    while (ESP8266.available())
-    {
-      String line = ESP8266.readStringUntil("\n");
-
-      data += line;
-    }
-  }
-
-  return data;
-}
-
-bool GetInfo(String& info)
-{
-  info = "";
-
-  bool success = false;
-  String data;
-
-  String cmd = "AT+CIPSTART=0,\"TCP\",\""; cmd += SERVER; cmd += "\","; cmd += PORT;
-  Print(0, 0, String("-> ") + cmd);
-  ESP8266.println(cmd);
-  success = ReadDataFromEsp(2000, "OK", data);
-  Print(0, 0, data);
-  delay(2000);
-
-  cmd = "GET "; cmd += PATH; cmd += " HTTP/1.1\r\n";
-  cmd +="Host: "; cmd += HOST; cmd += ":"; cmd += PORT; cmd += "\r\n";
-  cmd += "\r\n";
-  Print(0, 0, String("-> ") + cmd);
-
-  String cmd2 = "AT+CIPSEND=0,"; cmd2 += String(cmd.length());
-  Print(0, 0, String("-> ") + cmd2);
-  ESP8266.println(cmd2);
-  success = ReadDataFromEsp(500, "OK", data);
-  Print(0, 0, data);
-
-  // send request and get result
-  Print(0, 0, cmd);
-  ESP8266.println(cmd);
-  success = ReadDataFromEsp(2000, "OK", data);
-  Print(0, 0, data);
-  delay(1000);
-
-  // parse result to extract DotA info
-  unsigned int infiniteLoopChecker = 0;
-  const unsigned int nbLoopsMax = 100;
-  int start = 0;
-  unsigned int dataLength = data.length();
-  bool storeResult = false;
-  while (start < dataLength && infiniteLoopChecker < nbLoopsMax)
-  {
-    // get the current line
-    int indexOfNewLine = data.indexOf('\n', start);
-    if (indexOfNewLine == -1)
-    {
-      indexOfNewLine = dataLength;
-    }
-
-    String line = data.substring(start, indexOfNewLine);
-
-    start = indexOfNewLine + 1;
-
-    ++infiniteLoopChecker;
-
-    // store the line if necessary
-    if (!storeResult && line.indexOf(TAG_START) > -1)
-    {
-      storeResult = true;
-      continue;
-    }
-
-    if (storeResult && line.indexOf(TAG_END) > -1)
-    {
-      break;
-    }
-
-    if (storeResult)
-    {
-      info += line + "\n";
-    }
-  }
-
-  ESP8266.println("AT+CIPCLOSE=0");
-  success = ReadDataFromEsp(1000, "OK", data);
-  delay(100);
-
-  return success;
+    clearDisplay(WHITE);
+    setStr(data.c_str(), x, y, BLACK);
+    updateDisplay();
 }
 
 void DisplayInfo(const String& info)
 {
-  unsigned int cptLines = 0;
-  const unsigned int nbLoopsMax = 100;
-  const unsigned int length = info.length();
-  int start = 0;
-  while (start < length && cptLines < nbLoopsMax)
-  {
-    // get the current line
-    int indexOfNewLine = info.indexOf('\n', start);
-    if (indexOfNewLine == -1)
+    unsigned int cptLines = 0;
+    const unsigned int nbLoopsMax = 100;
+    const unsigned int length = info.length();
+    int start = 0;
+    while (start < length && cptLines < nbLoopsMax)
     {
-      indexOfNewLine = length;
+        // get the current line
+        int indexOfNewLine = info.indexOf('\n', start);
+        if (indexOfNewLine == -1)
+        {
+            indexOfNewLine = length;
+        }
+
+        String line = info.substring(start, indexOfNewLine);
+
+        if (line.length() > 0)
+        {
+            PrintOnScreen(cptLines * 8, 0, line);
+        }
+
+        start = indexOfNewLine + 1;
+        ++cptLines;
     }
+}
 
-    String line = info.substring(start, indexOfNewLine);
-
-    if (line.length() > 0)
+void ReadConfigFromEEPROM()
+{
+    String data = ReadFromEEPROM(0, 512, BREAK_CODE);
+    unsigned int separatorLength = EEPROMSeparator.length();
+    unsigned int indexOfFirstSeparator = data.indexOf(EEPROMSeparator);
+    unsigned int indexOfSecondSeparator = data.indexOf(EEPROMSeparator, indexOfFirstSeparator + separatorLength);
+    Serial.println(indexOfFirstSeparator);
+    Serial.println(indexOfSecondSeparator);
+    if (indexOfFirstSeparator != -1 && indexOfSecondSeparator != -1)
     {
-      Print(cptLines * 8, 0, line);
+        ssid        = data.substring(0, indexOfFirstSeparator);
+        password    = data.substring(indexOfFirstSeparator + separatorLength, indexOfSecondSeparator);
+        userId      = data.substring(indexOfSecondSeparator + separatorLength);
     }
+}
 
-    start = indexOfNewLine + 1;
-    ++cptLines;
-  }
+void SaveConfigToEEPROM()
+{
+    String data = ssid + EEPROMSeparator + password + EEPROMSeparator + userId;
+    WriteToEEPROM(0, 512, BREAK_CODE, data);
 }
 
 void setup()
 {
-  ESP8266.begin(BAUDRATE);
-  delay(10);
+    Serial.begin(BAUDRATE);
+    delay(100);
 
-  pinMode(PIN_BUTTON, INPUT);
+    // we start by getting stored wifi ssid, password and user id
 
-#ifdef USE_SCREEN
-  lcdBegin(); // This will setup our pins, and initialize the LCD
-  updateDisplay(); // with displayMap untouched, SFE logo
-  setContrast(40); // Good values range from 40-60
-  delay(10);
-#else
-  Serial.begin(BAUDRATE);
-#endif //USE_SCREEN
+    Serial.println("Getting stored config...");
 
-  Print(0, 0, "Init...");
+    EEPROM.begin(512);
 
-  infoToDisplay = "INFO";
+    ReadConfigFromEEPROM();
 
-  bool success = true;
-  String data;
+    Serial.println("Done.");
 
-  // We start by connecting to a WiFi network
-  //Serial.println("AT+CWJAP=\"CookieMaestro\",\"UpEcOfMe\"");
-  ESP8266.println("AT");
-  Print(0, 0, "-> AT");
-  success = success && ReadDataFromEsp(2000, "OK", data);
-  Print(0, 0, data);
-  delay(500);
+    // then by connecting to a WiFi network
 
-  ESP8266.println("AT+CIFSR");
-  Print(0, 0, "-> AT+CIFSR");
-  success = success && ReadDataFromEsp(2000, "OK", data);
-  Print(0, 0, data);
-  delay(1000);
+    Serial.println("Connecting to WiFi...");
 
-  ESP8266.println("AT+CIPMUX=1");
-  Print(0, 0, "-> AT+CIPMUX=1");
-  success = success && ReadDataFromEsp(2000, "OK", data);
-  Print(0, 0, data);
-  delay(500);
+    ConnectToWiFi();
 
-  success = success && GetInfo(infoToDisplay);
-
-  if (!success)
-  {
-    infoToDisplay = "Error";
-  }
-
-  refreshDisplay = true;
+    Serial.println("Done.");
 }
 
-// Loop turns the display into a local serial monitor echo.
-// Type to the Arduino from the serial monitor, and it'll echo
-// what you type on the display. Type ~ to clear the display.
 void loop()
 {
-  if (refreshDisplay)
-  {
-#ifdef USE_SCREEN
-    clearDisplay(WHITE);
-    updateDisplay();
-#endif //USE_SCREEN
-
-    DisplayInfo(infoToDisplay);
-
-    refreshDisplay = false;
-  }
-
-  bool buttonPressed = digitalRead(PIN_BUTTON);
-  if (buttonPressed)
-  {
-    bool success = GetInfo(infoToDisplay);
-
-    if (!success)
+    // read input
+    if (Serial.available())
     {
-      infoToDisplay = "Error";
+        String cmd = Serial.readStringUntil('\r');
+        Serial.println(String("Processing command: ") + cmd);
+
+        if (cmd.indexOf("help") != -1)
+        {
+            Serial.println("Commands:\nhelp\nssid:\npassword:\nuserid:\nreset");
+        }
+        if (cmd.indexOf("ssid:") != -1)
+        {
+            ssid = cmd.substring(String("ssid:").length());
+            Serial.println(String("New ssid: ") + ssid);
+            SaveConfigToEEPROM();
+        }
+        if (cmd.indexOf("password:") != -1)
+        {
+            password = cmd.substring(String("password:").length());
+            Serial.println(String("New password: ") + password);
+            SaveConfigToEEPROM();
+        }
+        if (cmd.indexOf("userid:") != -1)
+        {
+            userId = cmd.substring(String("userid:").length());
+            Serial.println(String("New userid: ") + userId);
+            SaveConfigToEEPROM();
+        }
+        if (cmd.indexOf("reset") != -1)
+        {
+            Serial.println("Reset");
+            ESP.restart();
+        }
     }
 
-    refreshDisplay = true;
-  }
+    // get user info if the time has come and device is connected
+    if (millis() > timeOfTheLastRequest + INFO_UPDATE_FREQUENCY && WiFi.status() != WL_CONNECTED)
+    {
+        Serial.println("Getting DotA info...");
 
-  delay(10);
+        String info;
+        info = GetInfo();
+        if (info.length() > 0)
+        {
+            Serial.print(info);
+            //DisplayInfo(info);
+
+            Serial.println("Done.");
+        }
+        else
+        {
+            Serial.println("An error occured while retrieving DotA info.");
+        }
+
+        timeOfTheLastRequest = millis();
+    }
+
+    delay(100);
 }

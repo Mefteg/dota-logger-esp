@@ -258,7 +258,7 @@ void loop()
     }
 
     // get user info if the time has come and device is connected
-    if (millis() > timeOfTheLastRequest + INFO_UPDATE_FREQUENCY && WiFi.status() != WL_CONNECTED)
+    if (millis() > timeOfTheLastRequest + INFO_UPDATE_FREQUENCY && WiFi.status() == WL_CONNECTED)
     {
         Serial.println("Getting DotA info...");
 
